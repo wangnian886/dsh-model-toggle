@@ -1,0 +1,60 @@
+{
+  "name": "dsh-model-toggle",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Per-model hide/show switches for llm-pi-ai providers in the DSH settings page; hidden models disappear from the conversation model picker and are restorable at any time.",
+  "license": "MIT",
+  "author": "wangnian886",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wangnian886/dsh-model-toggle.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wangnian886/dsh-model-toggle/issues"
+  },
+  "homepage": "https://github.com/wangnian886/dsh-model-toggle#readme",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "llm-pi-ai",
+    "plugin",
+    "bundle",
+    "model-provider",
+    "settings"
+  ],
+  "main": "./host.js",
+  "exports": {
+    ".": "./host.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "host.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.1-rc.1 <0.2.2-0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-api-gateway"
+      ]
+    }
+  }
+}
