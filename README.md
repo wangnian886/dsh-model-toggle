@@ -2,6 +2,23 @@
 
 设置页 → 模型，页面底部多出一块「**模型开关**」面板：每个自定义提供商的每个模型一行，右侧一个「隐藏」按钮；隐藏后该模型立即从**对话底部的模型选择器**消失，同一行变成「显示」按钮，随时恢复。
 
+## 安装
+
+需要 DSH 0.2（`@deepseek-ai/dsh-typert-protocol` ≥ 0.2.0-rc.1）。插件是纯 ESM JavaScript，没有构建步骤，装完不用编译。
+
+```sh
+# 从 GitHub 源安装（当前只有这条路径，npm 上还没发）
+dsh plugin --profile <你的 profile> add wangnian886/dsh-model-toggle
+```
+
+`--profile` 填你正在用的 profile 名（Web GUI 默认是 `web`；本机桌面版是 `desktop`）。装完**刷新网页**，设置 → 模型 页底部就会出现「模型开关」面板。
+
+卸载（同时会自动把所有已隐藏的模型还原）：
+
+```sh
+dsh plugin --profile <你的 profile> remove dsh-model-toggle
+```
+
 ## 使用
 
 1. **刷新网页**（客户端模块只在页面加载时挂载）。
@@ -33,15 +50,20 @@
 
 ## 开发自测
 
-`D:\DevCache\temp\mt-test\` 四套（合计 90 项，全部零依赖 stub 假宿主）：
+测试随仓库发布，零依赖（假宿主 + 假 React，不需要装 DSH，也不需要 `npm install`）：
+
+```bash
+npm test           # 4 套，合计 90 项，应全绿
+npm run test:mutant  # 变异测试，应当跑出 5 条 FAIL（exit 1）
+```
 
 | 脚本 | 项数 | 覆盖 |
 |---|---|---|
-| `test.mjs` | 52 | host 行为契约（raw/descriptor 两臂）+ 服务注册守卫 |
-| `id-check.mjs` | 8 | client.js 的 loader id 必须逐字等于包名 |
-| `render-check.mjs` | 16 | FooterPanel 渲染与按钮回调 |
-| `wire-check.mjs` | 14 | 与 dsh-model-pro 逐字对照的 wire 契约 |
+| `test/host.test.mjs` | 52 | host 行为契约（raw/descriptor 两臂）+ 服务注册守卫 |
+| `test/client-id.test.mjs` | 8 | client.js 的 loader id 必须逐字等于包名 |
+| `test/client-render.test.mjs` | 16 | FooterPanel 渲染与按钮回调 |
+| `test/wire.test.mjs` | 14 | 与 dsh-model-pro 逐字对照的 wire 契约 |
 
-`test-nofix.mjs` 是变异测试：把 `host.js` 复制成 `host-nofix.js` 并注释掉 `new ModelToggleRuntime(ctx);`，应当跑出 5 条 FAIL——守卫失效时先跑它确认测试本身还有效。
+`test/host-mutant.test.mjs` 是变异测试：`test/mutants/materialize.mjs` 把 `host.js` 复制到临时目录并注释掉 `new ModelToggleRuntime(ctx);`，然后跑**同一套** 52 项断言，应当得到 `1 passed, 5 failed`。守卫失效时先跑它，确认测试本身还有效。
 
-改完 `host.js` / `client.js` 后必须把文件复制到 `mt-test\` 再跑，那套夹具用的是副本。
+`test/setup.mjs` 用 `module.registerHooks` 把裸 peer 依赖 `@deepseek-ai/dsh-typert-protocol` 映射到 `test/stubs/` 里的替身——替身刻意复刻真实注册行为（构造函数里调 `ctx.reflect.provide`），而不是照单全收，否则「声明了 Service 类却没构造」这类 bug 在测试里完全不可见。
