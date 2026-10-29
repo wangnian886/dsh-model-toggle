@@ -7,9 +7,14 @@
 需要 DSH 0.2（`@deepseek-ai/dsh-typert-protocol` ≥ 0.2.0-rc.1）。插件是纯 ESM JavaScript，没有构建步骤，装完不用编译。
 
 ```sh
-# 从 GitHub 源安装（当前只有这条路径，npm 上还没发）
+# 从 GitHub 源安装
 dsh plugin --profile <你的 profile> add wangnian886/dsh-model-toggle
+
+# 或装预构建的 Release 包（免 allowBuilds 授权，不需要 git）
+dsh plugin --profile <你的 profile> add https://github.com/wangnian886/dsh-model-toggle/releases/latest/download/dsh-model-toggle.tgz
 ```
+
+`latest/download/dsh-model-toggle.tgz` 这个链接不带版本号，升级后仍然有效。
 
 `--profile` 填你正在用的 profile 名（Web GUI 默认是 `web`；本机桌面版是 `desktop`）。装完**刷新网页**，设置 → 模型 页底部就会出现「模型开关」面板。
 
