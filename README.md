@@ -60,7 +60,7 @@ dsh plugin --profile <你的 profile> remove dsh-model-toggle
 测试随仓库发布，零依赖（假宿主 + 假 React，不需要装 DSH，也不需要 `npm install`）：
 
 ```bash
-npm test           # 4 套，合计 104 项，应全绿
+npm test           # 5 套，合计 108 项，应全绿
 npm run test:mutant  # 变异测试，应当跑出 10 条 FAIL（exit 1）
 ```
 
@@ -70,6 +70,9 @@ npm run test:mutant  # 变异测试，应当跑出 10 条 FAIL（exit 1）
 | `test/client-id.test.mjs` | 8 | client.js 的 loader id 必须逐字等于包名 |
 | `test/client-render.test.mjs` | 21 | FooterPanel 渲染、按钮回调、busy 并发守卫、存档损坏提示 |
 | `test/wire.test.mjs` | 18 | wire 契约：结构比对 + **codec 行为比对**（两边对同一批信封同接受同拒绝） |
+| `test/real-unload.test.mjs` | 4 | **真实 cordis** 卸载：`ctx.plugin()` → `fiber.dispose()`，断言归档模型真的回来了 |
+
+`test/real-unload.test.mjs` 是唯一用真实 cordis 的套件——假 ctx 把 `effect(fn)` 当同步调用，模拟不出卸载顺序，所以 v0.1.2 的真机 bug 在假宿主里完全不可见。它需要 `@deepseek-ai/cordis`（已在 `devDependencies`）；**没装就打印 `SKIP` 并退出 0**，所以干净检出仍然零依赖全绿，`npm install` 之后才会真正跑。反向验证过：把 `host.js` 换回 v0.1.2 的形状，这套会跑出 2 条 FAIL 并精确指向「归档模型必须回来」。
 
 `test/host-mutant.test.mjs` 是变异测试：`test/mutants/materialize.mjs` 把 `host.js` 复制到临时目录并注释掉 `new ModelToggleRuntime(ctx);`，然后跑**同一套**断言，应当得到 `1 passed, 10 failed`。守卫失效时先跑它，确认测试本身还有效。两边的断言体是同一份 `test/suite.mjs`（由 `runSuite(importHost)` 参数化被测模块），所以不会出现「改了 A 忘了 B」的漂移。
 
