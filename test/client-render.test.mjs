@@ -82,20 +82,11 @@ await new Promise((r) => setTimeout(r, 20));
 check("a component was registered into the slot", typeof registeredComponent === "function", typeof registeredComponent);
 
 // ------------------------------------------------------------ render states
-function renderWith(states) {
-  const fake = makeReact(states.slice());
-  const prev = globalThis.__mtReact;
-  globalThis.__mtReact = fake.React;
-  return fake;
-}
-
-// The component closes over the `React` captured at factory time, so swap that
-// binding is impossible; instead drive it with the same React instance but feed
-// states through a mutable queue.
+// The component closes over the `React` captured at factory time, so swapping
+// that binding is impossible; instead drive it with the same React instance but
+// feed states through a mutable queue.
 const queue = [];
-const queueReact = React;
-const originalUseState = queueReact.useState;
-queueReact.useState = (initial) => {
+React.useState = (initial) => {
   const next = queue.length > 0 ? queue.shift() : initial;
   return [next, () => {}];
 };
@@ -186,6 +177,46 @@ try { hideBtns[0].props.onClick(); } catch (e) { clickErr = e; }
 check("hide button onClick does not throw", clickErr === null, clickErr ? String(clickErr.message) : "");
 await new Promise((r) => setTimeout(r, 20));
 check("hide button calls hide-model with route+modelId", remoteCalls.some((c) => c[0] === "hideModel" && c[1].route === "wb-gateway" && c[1].modelId === "wb-fixed-6"), JSON.stringify(remoteCalls));
+
+// A corrupt archive must be visible in the panel, not silently rendered as a
+// normal (empty) list: host returns ok:true plus `archiveError`.
+{
+  const brokenData = { providers: [], totals: { visible: 0, hidden: 0 }, archiveError: "Unexpected token } in JSON" };
+  tree.length = 0;
+  const brokenPanel = mountPanel(brokenData, null, null);
+  const brokenFlat = [];
+  const walkText = (n) => {
+    if (n === null || n === undefined) return;
+    if (typeof n === "string" || typeof n === "number") { brokenFlat.push(String(n)); return; }
+    if (Array.isArray(n)) { n.forEach(walkText); return; }
+    if (n.children) n.children.forEach(walkText);
+  };
+  walkText(brokenPanel);
+  const brokenText = brokenFlat.join(" | ");
+  check("archiveError is surfaced in the panel", brokenText.includes("存档读取失败") && brokenText.includes("Unexpected token } in JSON"), brokenText.slice(0, 160));
+}
+
+// ------------------------------------------------- concurrency guard (busy) ---
+// While one operation is in flight the panel must refuse a second one: every
+// button is disabled and toggle() returns before issuing a Remote call. The
+// guard is `if (busy !== null) return;` in client.js — without a non-null busy
+// state this branch is never reached, so it needs its own render.
+remoteCalls = [];
+const busyButtons = [];
+const busyPanel = mountPanel(okData, null, "wb-gateway/wb-fixed-6");
+walkBtn(busyPanel);
+// walkBtn pushes into `buttons`; take the fresh tail instead of a second walker.
+busyButtons.push(...buttons.slice(-4));
+check("all buttons disabled while an operation is in flight", busyButtons.length > 0 && busyButtons.every((b) => b.props.disabled === true), String(busyButtons.length));
+let busyClickErr = null;
+try { busyButtons[0].props.onClick(); } catch (e) { busyClickErr = e; }
+check("clicking a disabled button does not throw", busyClickErr === null, busyClickErr ? String(busyClickErr.message) : "");
+await new Promise((r) => setTimeout(r, 20));
+check("no Remote call is issued while busy", remoteCalls.length === 0, JSON.stringify(remoteCalls));
+
+// The button for the in-flight row carries the busy class; the others do not.
+const busyClasses = busyButtons.map((b) => b.props.className);
+check("in-flight row is marked busy, others are not", busyClasses.filter((c) => c.includes("mtg-btnBusy")).length === 1, JSON.stringify(busyClasses));
 
 // ---------------------------------------------------------------- reporting
 let failed = 0;

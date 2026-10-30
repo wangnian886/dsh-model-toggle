@@ -18,6 +18,7 @@ window.__ModuleLoader__.load({ id: "dsh-model-toggle", factory: (require) => {
 
   const PACKAGE = "dsh-model-toggle";
   const SERVICE_KEY = "modelToggle";
+  const SLOT = "settings.models.footer";
 
   // wire name -> host method name (must match host.js METHODS)
   const METHODS = [
@@ -166,6 +167,12 @@ window.__ModuleLoader__.load({ id: "dsh-model-toggle", factory: (require) => {
           : null
       ),
       error !== null ? React.createElement("div", { className: "mtg-note" }, error) : null,
+      // A corrupt archive makes list-states succeed with an empty/partial list
+      // and an `archiveError` field. Surfacing it here keeps "the archive is
+      // broken" distinguishable from "you have nothing to manage".
+      data !== null && typeof data.archiveError === "string"
+        ? React.createElement("div", { className: "mtg-note" }, `存档读取失败，隐藏操作会被拒绝：${data.archiveError}`)
+        : null,
       data === null && error === null ? React.createElement("div", { className: "mtg-hint" }, "加载中…") : null,
       data !== null && data.providers.length === 0
         ? React.createElement("div", { className: "mtg-hint" }, "没有可管理的模型提供商")
@@ -247,11 +254,8 @@ window.__ModuleLoader__.load({ id: "dsh-model-toggle", factory: (require) => {
     }, "dsh-model-toggle: remote");
     const slots = ctx.get("slots") ?? ctx.slots;
     if (slots === undefined) return;
-    slots.inject("settings.models.footer", () => {
-      return slots.register(
-        { name: "settings.models.footer", id: "dsh-model-toggle" },
-        () => React.createElement(FooterPanel)
-      );
+    slots.inject(SLOT, () => {
+      return slots.register({ name: SLOT, id: PACKAGE }, () => React.createElement(FooterPanel));
     });
   }
 

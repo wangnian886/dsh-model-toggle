@@ -30,7 +30,6 @@ const METHODS = [
   ["hide-model", "hideModel"],
   ["show-model", "showModel"]
 ];
-const METHOD_MAP = Object.fromEntries(METHODS);
 
 // ---------------------------------------------------------------- codecs ---
 const parser = (parse) => ({ parse });
@@ -104,9 +103,18 @@ const modelNameOf = (entry) => {
 const msgOf = (error) => (error instanceof Error ? error.message : String(error));
 
 let boundSettings; // set in apply(ctx)
+let boundLogger; // set in apply(ctx); lets pure readers warn without a ctx handle
 
 function settings() {
   return boundSettings;
+}
+
+function warn(message) {
+  try {
+    boundLogger?.warn?.(message);
+  } catch {
+    // A broken logger must never take a read path down with it.
+  }
 }
 
 function settingsArm(st) {
@@ -126,16 +134,27 @@ function fromDescribe(st, ns) {
 
 // Read a whole settings section. 0.1 exposes get(ns); 0.2 exposes describe()
 // rows ({ ns, user, value }).
+//
+// A throwing reader is NOT the same as an empty section: swallowing the error
+// turns "the settings service is broken" into "you have no providers", which
+// the panel renders as a perfectly normal empty list. Warn once so the two
+// states stay distinguishable in the log.
 function readSection(st, ns) {
   if (st === undefined || st === null) return {};
   if (typeof st.get === "function") {
     try {
       return asRecord(st.get(ns)) ?? {};
-    } catch {
+    } catch (error) {
+      warn(`dsh-model-toggle: reading settings section "${ns}" failed: ${msgOf(error)}`);
       return {};
     }
   }
-  return fromDescribe(st, ns);
+  try {
+    return fromDescribe(st, ns);
+  } catch (error) {
+    warn(`dsh-model-toggle: describing settings section "${ns}" failed: ${msgOf(error)}`);
+    return {};
+  }
 }
 
 function readProviderDict(st) {
@@ -351,8 +370,17 @@ async function showModel(args) {
   // Restore into llm-pi-ai FIRST — if that fails the archive stays intact and
   // nothing is lost; a failing archive cleanup afterwards only leaves a stale
   // (harmless, retryable) entry behind.
-  const prev = readSection(st, NS_LLM);
-  await writeLlm(st, next, prev);
+  try {
+    const prev = readSection(st, NS_LLM);
+    await writeLlm(st, next, prev);
+  } catch (error) {
+    return {
+      ok: false,
+      route,
+      modelId,
+      error: `could not restore the model into the picker: ${msgOf(error)}`
+    };
+  }
   if (list.length > 0) archive.hidden[route] = list;
   else delete archive.hidden[route];
   try {
@@ -401,13 +429,13 @@ async function restoreAll() {
 
 // --------------------------------------------------------------- runtime ---
 export class ModelToggleRuntime extends TypertRemoteService {
-  ctx;
   constructor(ctx) {
     super(ctx, SERVICE_KEY);
-    this.ctx = ctx;
   }
   async listStates() {
-    return listStates();
+    // Queued as well: a read racing a hide/show would otherwise observe the
+    // half-applied window where the archive already moved but llm-pi-ai has not.
+    return serialized(() => listStates());
   }
   async hideModel(args) {
     return serialized(() => hideModel(args || {}));
@@ -420,6 +448,7 @@ export class ModelToggleRuntime extends TypertRemoteService {
 // ------------------------------------------------------------------ apply ---
 export async function apply(ctx) {
   boundSettings = ctx.get("settings");
+  boundLogger = ctx.logger;
 
   // Resolve the archive file location: the profile directory that holds
   // cordis.patch.yml. Both services are injected by dsh-settings itself
@@ -490,9 +519,10 @@ export async function apply(ctx) {
 
   return () => {
     boundSettings = undefined;
+    boundLogger = undefined;
   };
 }
 
-export { MANIFEST, INVOCATIONS, SERVICE_KEY, PACKAGE, NS_LLM };
+export { MANIFEST, INVOCATIONS, SERVICE_KEY, PACKAGE, NS_LLM, ARCHIVE_NAME };
 export const inject = ["typert", "settings", "configEditor", "profileContext"];
 export const name = PACKAGE;

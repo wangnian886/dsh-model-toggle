@@ -28,7 +28,7 @@ dsh plugin --profile <你的 profile> remove dsh-model-toggle
 
 1. **刷新网页**（客户端模块只在页面加载时挂载）。
 2. 打开 设置 → 模型，滚到底部「模型开关」面板。
-3. 点某行的「隐藏」→ 该模型从对话选择器消失；点「显示」→ 恢复原位。
+3. 点某行的「隐藏」→ 该模型从对话选择器消失；点「显示」→ 合并回该提供商的模型列表**末尾**（原位置不保留，选择器里的顺序会变）。
 
 注意：隐藏当前会话正在用的模型前，先把会话切到别的模型。内置 DeepSeek 系提供商没有配置面，不归本插件管（面板里也不会出现）。
 
@@ -58,17 +58,19 @@ dsh plugin --profile <你的 profile> remove dsh-model-toggle
 测试随仓库发布，零依赖（假宿主 + 假 React，不需要装 DSH，也不需要 `npm install`）：
 
 ```bash
-npm test           # 4 套，合计 90 项，应全绿
-npm run test:mutant  # 变异测试，应当跑出 5 条 FAIL（exit 1）
+npm test           # 4 套，合计 100 项，应全绿
+npm run test:mutant  # 变异测试，应当跑出 6 条 FAIL（exit 1）
 ```
 
 | 脚本 | 项数 | 覆盖 |
 |---|---|---|
-| `test/host.test.mjs` | 52 | host 行为契约（raw/descriptor 两臂）+ 服务注册守卫 |
+| `test/host.test.mjs` | 53 | host 行为契约（raw/descriptor 两臂）+ 服务注册守卫 + 读取失败可见性 |
 | `test/client-id.test.mjs` | 8 | client.js 的 loader id 必须逐字等于包名 |
-| `test/client-render.test.mjs` | 16 | FooterPanel 渲染与按钮回调 |
-| `test/wire.test.mjs` | 14 | 与 dsh-model-pro 逐字对照的 wire 契约 |
+| `test/client-render.test.mjs` | 21 | FooterPanel 渲染、按钮回调、busy 并发守卫、存档损坏提示 |
+| `test/wire.test.mjs` | 18 | wire 契约：结构比对 + **codec 行为比对**（两边对同一批信封同接受同拒绝） |
 
-`test/host-mutant.test.mjs` 是变异测试：`test/mutants/materialize.mjs` 把 `host.js` 复制到临时目录并注释掉 `new ModelToggleRuntime(ctx);`，然后跑**同一套** 52 项断言，应当得到 `1 passed, 5 failed`。守卫失效时先跑它，确认测试本身还有效。
+`test/host-mutant.test.mjs` 是变异测试：`test/mutants/materialize.mjs` 把 `host.js` 复制到临时目录并注释掉 `new ModelToggleRuntime(ctx);`，然后跑**同一套**断言，应当得到 `1 passed, 6 failed`。守卫失效时先跑它，确认测试本身还有效。两边的断言体是同一份 `test/suite.mjs`（由 `runSuite(importHost)` 参数化被测模块），所以不会出现「改了 A 忘了 B」的漂移。
+
+> 关于 wire 契约的比对方式：`INVOCATIONS` 里的 codec 携带 `parse` **函数**，`JSON.stringify` 会静默丢掉它们，序列化后只剩 `{mode, typeSymbol, schema:{}}`——所以拿序列化结果比对**证明不了任何事**（实测：把客户端的返回值校验整个拆掉，旧断言仍返回 `true`）。现在的守卫改为行为比对：两边各喂一批合法/非法信封，断言同接受、同拒绝。
 
 `test/setup.mjs` 用 `module.registerHooks` 把裸 peer 依赖 `@deepseek-ai/dsh-typert-protocol` 映射到 `test/stubs/` 里的替身——替身刻意复刻真实注册行为（构造函数里调 `ctx.reflect.provide`），而不是照单全收，否则「声明了 Service 类却没构造」这类 bug 在测试里完全不可见。
