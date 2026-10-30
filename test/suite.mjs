@@ -59,7 +59,7 @@ export async function runSuite(importHost) {
     return svc;
   }
 
-  function makeCtx(svc, { profileDir, configEditorDoc } = {}) {
+  function makeCtx(svc, { profileDir, configEditorDoc, defaultSelection, defaultModelThrows } = {}) {
     const warns = [];
     const effects = [];
     const manifests = [];
@@ -89,6 +89,11 @@ export async function runSuite(importHost) {
         if (name === "typert") return ctx.typert;
         if (name === "profileContext") return profileDir !== undefined ? { dir: profileDir } : undefined;
         if (name === "configEditor") return configEditorDoc !== undefined ? { documentPath: configEditorDoc } : undefined;
+        if (name === "agentDefaultModel") {
+          if (defaultModelThrows === true) throw new Error("agentDefaultModel exploded");
+          if (defaultSelection === undefined) return undefined;
+          return { currentSelection: () => defaultSelection };
+        }
         return undefined;
       },
       effect(fn, label) {
@@ -117,7 +122,10 @@ export async function runSuite(importHost) {
       },
       p2: {
         displayName: "Provider Two",
-        models: [{ id: "m3", name: "Model Three" }]
+        models: [
+          { id: "m3", name: "Model Three" },
+          { id: "m4", name: "Model Four" }
+        ]
       }
     },
     unrelatedKey: { keep: "me" }
@@ -179,7 +187,7 @@ export async function runSuite(importHost) {
     const listed = await rt.listStates();
     check(`${arm}: listStates totals`, () => {
       assert.equal(listed.ok, true);
-      assert.deepEqual(listed.totals, { visible: 3, hidden: 0 });
+      assert.deepEqual(listed.totals, { visible: 4, hidden: 0 });
       const p1 = listed.providers.find((p) => p.route === "p1");
       assert.deepEqual(p1.models, [
         { id: "m-str", name: "m-str" },
@@ -232,7 +240,7 @@ export async function runSuite(importHost) {
     // listStates reflects hidden
     const listed2 = await rt.listStates();
     check(`${arm}: listStates shows archived`, () => {
-      assert.deepEqual(listed2.totals, { visible: 2, hidden: 1 });
+      assert.deepEqual(listed2.totals, { visible: 3, hidden: 1 });
       const p1 = listed2.providers.find((p) => p.route === "p1");
       assert.deepEqual(p1.hidden, [{ id: "m2", name: "Model Two" }]);
     });
@@ -408,6 +416,75 @@ export async function runSuite(importHost) {
       `expected a warning naming ${NS_LLM} and the cause, got ${JSON.stringify(ctx.warns)}`
     );
     await fsp.rm(profileDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  // llm-pi-ai rejects a route whose models list is empty (`resolves no models`
+  // in resolveRouteModels), so hiding the last one would fail the write and
+  // leave the model listed as both visible and hidden. dsh-model-pro 2.1.0
+  // added the same guard.
+  await checkAsync("refuses to hide the last visible model of a provider", async () => {
+    const profileDir = await fsp.mkdtemp(path.join(os.tmpdir(), "mt-lastmodel-"));
+    const svc = makeSettings("descriptor");
+    svc._sections.set(NS_LLM, {
+      providers: {
+        solo: { displayName: "Solo", models: [{ id: "only-one", name: "Only One" }] }
+      }
+    });
+    const ctx = makeCtx(svc, { profileDir });
+    await apply(ctx);
+    const rt = ctx.services.get(SERVICE_KEY);
+    const h = await rt.hideModel({ route: "solo", modelId: "only-one" });
+    assert.equal(h.ok, false);
+    assert.match(String(h.error), /last visible model/);
+    // Nothing may move: no archive entry, no config write.
+    assert.deepEqual(svc._sections.get(NS_LLM).providers.solo.models, [{ id: "only-one", name: "Only One" }]);
+    assert.deepEqual(svc._replaceCalls, []);
+    const file = await readArchiveFile(profileDir).catch(() => ({ hidden: {} }));
+    assert.deepEqual(file.hidden.solo, undefined);
+    // Two models are enough for the same route to hide one of them.
+    svc._sections.get(NS_LLM).providers.solo.models.push({ id: "second", name: "Second" });
+    const ok = await rt.hideModel({ route: "solo", modelId: "only-one" });
+    assert.equal(ok.ok, true);
+    assert.deepEqual(svc._sections.get(NS_LLM).providers.solo.models, [{ id: "second", name: "Second" }]);
+    await fsp.rm(profileDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  // Hiding the model DSH falls back to leaves new sessions unable to resolve it.
+  await checkAsync("refuses to hide the current default model", async () => {
+    const profileDir = await fsp.mkdtemp(path.join(os.tmpdir(), "mt-default-"));
+    const svc = makeSettings("descriptor");
+    svc._sections.set(NS_LLM, cloneSeed());
+    const ctx = makeCtx(svc, { profileDir, defaultSelection: { provider: "p1", model: "m2" } });
+    await apply(ctx);
+    const rt = ctx.services.get(SERVICE_KEY);
+    const h = await rt.hideModel({ route: "p1", modelId: "m2" });
+    assert.equal(h.ok, false);
+    assert.match(String(h.error), /default model/);
+    assert.deepEqual(svc._replaceCalls, []);
+    assert.equal(svc._sections.get(NS_LLM).providers.p1.models.length, 2);
+    // A different model of the same provider is still hideable.
+    const other = await rt.hideModel({ route: "p1", modelId: "m-str" });
+    assert.equal(other.ok, true);
+    await fsp.rm(profileDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  // The guard must not block hiding when the service is absent or broken: the
+  // default selection is a safety net, not a dependency.
+  await checkAsync("default-model guard is inert when agentDefaultModel is missing or throws", async () => {
+    for (const [label, opts] of [
+      ["absent", {}],
+      ["throwing", { defaultModelThrows: true }]
+    ]) {
+      const profileDir = await fsp.mkdtemp(path.join(os.tmpdir(), `mt-def-${label}-`));
+      const svc = makeSettings("descriptor");
+      svc._sections.set(NS_LLM, cloneSeed());
+      const ctx = makeCtx(svc, { profileDir, ...opts });
+      await apply(ctx);
+      const rt = ctx.services.get(SERVICE_KEY);
+      const h = await rt.hideModel({ route: "p1", modelId: "m2" });
+      assert.equal(h.ok, true, `${label}: hide must still work`);
+      await fsp.rm(profileDir, { recursive: true, force: true }).catch(() => {});
+    }
   });
 
   return { pass, fail, results };

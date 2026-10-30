@@ -104,9 +104,26 @@ const msgOf = (error) => (error instanceof Error ? error.message : String(error)
 
 let boundSettings; // set in apply(ctx)
 let boundLogger; // set in apply(ctx); lets pure readers warn without a ctx handle
+// Optional: set in apply(ctx) when the host exposes agentDefaultModel. Hiding
+// the model DSH falls back to would leave new sessions unable to resolve it,
+// so the guard below refuses that. Absent service => guard is a no-op.
+let boundDefaultModel;
 
 function settings() {
   return boundSettings;
+}
+
+// Returns the model id when `modelId` of `route` is DSH's current default
+// selection, otherwise undefined. Any failure reading the selection counts as
+// "not the default": a broken reader must not block hiding.
+function currentDefaultHit(route, modelId) {
+  try {
+    const selection = boundDefaultModel?.currentSelection?.();
+    if (selection && selection.provider === route && selection.model === modelId) return selection.model;
+  } catch {
+    // fall through
+  }
+  return undefined;
 }
 
 function warn(message) {
@@ -312,6 +329,29 @@ async function hideModel(args) {
     }
     return { ok: false, error: `model "${modelId}" not found in provider "${route}"` };
   }
+  // Guard 1: llm-pi-ai rejects a declared route whose models list is empty
+  // (`resolves no models` in resolveRouteModels, strict validation), so hiding
+  // the last visible model would make the write fail and leave the model listed
+  // as both visible and hidden.
+  if (models.length <= 1) {
+    return {
+      ok: false,
+      route,
+      modelId,
+      error: `cannot hide the last visible model of "${route}": llm-pi-ai requires every route to keep at least one model entry. Add another model to this provider first, then hide this one.`
+    };
+  }
+  // Guard 2: hiding the model DSH currently falls back to would leave new
+  // sessions unable to resolve it. Same rule dsh-model-pro 2.1.0 enforces.
+  const isDefault = currentDefaultHit(route, modelId);
+  if (isDefault !== undefined) {
+    return {
+      ok: false,
+      route,
+      modelId,
+      error: `"${isDefault}" is DSH's current default model; hiding it would leave new sessions unable to resolve it. Switch the model picker to another model first, then hide this one.`
+    };
+  }
   const [entry] = models.splice(idx, 1);
   const archive = await readArchive();
   const list = Array.isArray(archive.hidden[route]) ? archive.hidden[route].slice() : [];
@@ -449,6 +489,14 @@ export class ModelToggleRuntime extends TypertRemoteService {
 export async function apply(ctx) {
   boundSettings = ctx.get("settings");
   boundLogger = ctx.logger;
+  // agentDefaultModel is optional: it is absent in deployments without a
+  // default-model owner, in which case the "do not hide the default" guard
+  // simply has nothing to check.
+  try {
+    boundDefaultModel = ctx.get("agentDefaultModel");
+  } catch {
+    boundDefaultModel = undefined;
+  }
 
   // Resolve the archive file location: the profile directory that holds
   // cordis.patch.yml. Both services are injected by dsh-settings itself
@@ -520,6 +568,7 @@ export async function apply(ctx) {
   return () => {
     boundSettings = undefined;
     boundLogger = undefined;
+    boundDefaultModel = undefined;
   };
 }
 
