@@ -547,6 +547,16 @@ export async function apply(ctx) {
   // Restore every archived model when the plugin is disabled or uninstalled,
   // so hiding never becomes data loss. llm-pi-ai's fiber stays ACTIVE while
   // ours unloads, so this write succeeds even though ours cannot.
+  //
+  // The module-level handles are cleared INSIDE this disposer, never in a
+  // cleanup returned from apply(). Cordis runs every disposer of a fiber
+  // concurrently (`_unload()` does `Promise.all(disposables.clear().map(...))`),
+  // and an `apply()` return value is just one more entry in that list: the
+  // synchronous cleanup runs to completion before this async disposer gets
+  // past its first await. Clearing `boundSettings` there made `restoreAll()`
+  // see no settings service and silently restore nothing — the v0.1.2
+  // uninstall left eight models stranded in the archive on the real machine.
+  // (cordis lib/index.js: `_unload()` ~L1372, `_execute()` ~L1135.)
   ctx.effect(
     () => {
       return async () => {
@@ -559,17 +569,16 @@ export async function apply(ctx) {
           ctx.logger?.warn?.(
             `dsh-model-toggle: restore on unload failed: ${msgOf(error)} — the archive file is kept`
           );
+        } finally {
+          // Release the handles only after the restore had its chance to run.
+          boundSettings = undefined;
+          boundLogger = undefined;
+          boundDefaultModel = undefined;
         }
       };
     },
     "dsh-model-toggle: restore archived models on unload"
   );
-
-  return () => {
-    boundSettings = undefined;
-    boundLogger = undefined;
-    boundDefaultModel = undefined;
-  };
 }
 
 export { MANIFEST, INVOCATIONS, SERVICE_KEY, PACKAGE, NS_LLM, ARCHIVE_NAME };

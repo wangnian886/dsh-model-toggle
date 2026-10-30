@@ -60,18 +60,20 @@ dsh plugin --profile <你的 profile> remove dsh-model-toggle
 测试随仓库发布，零依赖（假宿主 + 假 React，不需要装 DSH，也不需要 `npm install`）：
 
 ```bash
-npm test           # 4 套，合计 103 项，应全绿
-npm run test:mutant  # 变异测试，应当跑出 9 条 FAIL（exit 1）
+npm test           # 4 套，合计 104 项，应全绿
+npm run test:mutant  # 变异测试，应当跑出 10 条 FAIL（exit 1）
 ```
 
 | 脚本 | 项数 | 覆盖 |
 |---|---|---|
-| `test/host.test.mjs` | 56 | host 行为契约（raw/descriptor 两臂）+ 服务注册守卫 + 读取失败可见性 + 两道隐藏护栏 |
+| `test/host.test.mjs` | 57 | host 行为契约（raw/descriptor 两臂）+ 服务注册守卫 + 读取失败可见性 + 两道隐藏护栏 + 卸载还原顺序 |
 | `test/client-id.test.mjs` | 8 | client.js 的 loader id 必须逐字等于包名 |
 | `test/client-render.test.mjs` | 21 | FooterPanel 渲染、按钮回调、busy 并发守卫、存档损坏提示 |
 | `test/wire.test.mjs` | 18 | wire 契约：结构比对 + **codec 行为比对**（两边对同一批信封同接受同拒绝） |
 
-`test/host-mutant.test.mjs` 是变异测试：`test/mutants/materialize.mjs` 把 `host.js` 复制到临时目录并注释掉 `new ModelToggleRuntime(ctx);`，然后跑**同一套**断言，应当得到 `1 passed, 9 failed`。守卫失效时先跑它，确认测试本身还有效。两边的断言体是同一份 `test/suite.mjs`（由 `runSuite(importHost)` 参数化被测模块），所以不会出现「改了 A 忘了 B」的漂移。
+`test/host-mutant.test.mjs` 是变异测试：`test/mutants/materialize.mjs` 把 `host.js` 复制到临时目录并注释掉 `new ModelToggleRuntime(ctx);`，然后跑**同一套**断言，应当得到 `1 passed, 10 failed`。守卫失效时先跑它，确认测试本身还有效。两边的断言体是同一份 `test/suite.mjs`（由 `runSuite(importHost)` 参数化被测模块），所以不会出现「改了 A 忘了 B」的漂移。
+
+> 关于卸载还原的顺序：`apply()` 的返回值和 `ctx.effect()` 注册的 disposer 会被 cordis 的 `_unload()` **并发**执行（`Promise.all(disposables.clear().map(...))`），同步 cleanup 会在 async disposer 过第一个 `await` 之前就跑完。所以清理模块级句柄不能放在 `apply()` 的返回值里，必须放进 unload effect 自己的 `finally`——否则还原逻辑读到的是已被清空的 `undefined`，卸载时静默什么都不做（v0.1.2 及更早版本的真机 bug，由 `unload restore survives apply()'s cleanup running first` 这条用例守住）。
 
 > 关于 wire 契约的比对方式：`INVOCATIONS` 里的 codec 携带 `parse` **函数**，`JSON.stringify` 会静默丢掉它们，序列化后只剩 `{mode, typeSymbol, schema:{}}`——所以拿序列化结果比对**证明不了任何事**（实测：把客户端的返回值校验整个拆掉，旧断言仍返回 `true`）。现在的守卫改为行为比对：两边各喂一批合法/非法信封，断言同接受、同拒绝。
 

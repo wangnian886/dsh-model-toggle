@@ -144,7 +144,7 @@ export async function runSuite(importHost) {
     const svc = makeSettings(arm);
     svc._sections.set(NS_LLM, cloneSeed());
     const ctx = makeCtx(svc, { profileDir });
-    await apply(ctx);
+    const cleanup = await apply(ctx);
     const rt = ctx.services.get(SERVICE_KEY);
     // Hard stop with a readable message: without the Service the gateway fails
     // every Remote call with `active Service "..." is unavailable`, so an
@@ -485,6 +485,34 @@ export async function runSuite(importHost) {
       assert.equal(h.ok, true, `${label}: hide must still work`);
       await fsp.rm(profileDir, { recursive: true, force: true }).catch(() => {});
     }
+  });
+
+  // Regression guard for the v0.1.2 uninstall bug: real Cordis runs a fiber's
+  // disposers concurrently (`_unload()` does `Promise.all(disposables.clear()
+  // .map(...))`), so the synchronous cleanup returned by apply() finishes
+  // BEFORE the async restore disposer gets past its first await. The restore
+  // must therefore not depend on any handle that cleanup clears.
+  await checkAsync("unload restore survives apply()'s cleanup running first", async () => {
+    const profileDir = await fsp.mkdtemp(path.join(os.tmpdir(), "mt-unload-order-"));
+    const svc = makeSettings("descriptor");
+    svc._sections.set(NS_LLM, cloneSeed());
+    const ctx = makeCtx(svc, { profileDir });
+    const cleanup = await apply(ctx);
+    const rt = ctx.services.get(SERVICE_KEY);
+    await rt.hideModel({ route: "p1", modelId: "m2" });
+    assert.deepEqual(svc._sections.get(NS_LLM).providers.p1.models, ["m-str"]);
+    // Exact Cordis ordering: the apply() return value is one more disposer in
+    // the same batch, and it runs to completion synchronously.
+    if (typeof cleanup === "function") cleanup();
+    const unload = ctx.effects.find((e) => String(e.label).includes("restore"));
+    await unload.disposer();
+    assert.ok(
+      svc._sections.get(NS_LLM).providers.p1.models.some((m) => typeof m === "object" && m.id === "m2"),
+      "the archived model must come back even though apply()'s cleanup ran first"
+    );
+    const file = await readArchiveFile(profileDir);
+    assert.equal(file.hidden.p1, undefined);
+    await fsp.rm(profileDir, { recursive: true, force: true }).catch(() => {});
   });
 
   return { pass, fail, results };
