@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-toggle",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Per-model hide/show switches for llm-pi-ai providers in the DSH settings page; hidden models disappear from the conversation model picker and are restorable at any time.",
   "license": "MIT",
